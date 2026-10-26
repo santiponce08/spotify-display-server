@@ -11,7 +11,7 @@ app.get('/', async (req, res) => {
     // Tomamos el device_id por parámetro o usamos uno por defecto de prueba
     const deviceId = req.query.device_id || 'default_device';
     
-    // URL a la que redirigirá el QR para iniciar sesión en Spotify (puedes adaptarla a tu lógica de OAuth)
+    // URL a la que redirigirá el QR para iniciar sesión en Spotify
     const linkAuthSpotify = `https://spotify-display-server.onrender.com/login?device_id=${deviceId}`;
 
     try {
@@ -47,6 +47,34 @@ app.get('/', async (req, res) => {
     }
 });
 
+// Ruta de inicio de sesión (la que faltaba para evitar el error Cannot GET /login)
+app.get('/login', (req, res) => {
+    const deviceId = req.query.device_id || 'default_device';
+    
+    res.send(`
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Conectar Spotify</title>
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; background-color: #121212; color: white; margin-top: 50px; }
+                .container { background: #181818; padding: 30px; border-radius: 12px; display: inline-block; }
+                h1 { color: #1DB954; }
+                p { color: #b3b3b3; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>Conectando con Spotify...</h1>
+                <p>Dispositivo vinculado ID: <strong>${deviceId}</strong></p>
+                <p>Aquí se integrará el flujo de autenticación de la API de Spotify.</p>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
 // Ruta que consulta el ESP32 cada 3 segundos
 app.get('/api/current-song', (req, res) => {
     const deviceId = req.query.device_id;
@@ -59,7 +87,7 @@ app.get('/api/current-song', (req, res) => {
         return res.status(404).json({ error: "Dispositivo no vinculado" });
     }
 
-    // Simulación de respuesta de la canción actual (aquí conectarías tu lógica real de la API de Spotify con el token del usuario)
+    // Simulación de respuesta de la canción actual
     res.json({
         is_playing: true,
         item: {
