@@ -1,12 +1,12 @@
 const express = require('express');
 const qrcode = require('qrcode');
-const axios = require('axios'); // Asegurate de tener axios instalado o usaremos fetch
+const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Credenciales de la API de Spotify (reemplazalas con tus valores o usá variables de entorno)
-const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || 'TU_CLIENT_ID';
-const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || 'TU_CLIENT_SECRET';
+// Credenciales de la API de Spotify de Santi
+const CLIENT_ID = '2728d65ad1ed49358d08d71ea8f42dd2';
+const CLIENT_SECRET = '91b2d62955b143aa84952cf6ec31d9b6';
 const REDIRECT_URI = 'https://spotify-display-server.onrender.com/callback';
 
 // Almacenamiento temporal en memoria para los tokens de Spotify de cada ESP32
@@ -56,11 +56,9 @@ app.get('/login', (req, res) => {
     const deviceId = req.query.device_id || 'default_device';
     const state = Math.random().toString(36).substring(7);
     
-    // Guardamos qué device_id corresponde a este state temporalmente
     authStates[state] = deviceId;
 
     const scope = 'user-read-playback-state user-read-currently-playing';
-    
     const spotifyAuthUrl = `https://accounts.spotify.com/authorize?response_type=code&client_id=${CLIENT_ID}&scope=${encodeURIComponent(scope)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&state=${state}`;
 
     res.redirect(spotifyAuthUrl);
@@ -77,7 +75,6 @@ app.get('/callback', async (req, res) => {
     }
 
     try {
-        // Intercambiamos el código por los tokens de acceso y refresco
         const tokenResponse = await axios.post('https://accounts.spotify.com/api/token', new URLSearchParams({
             grant_type: 'authorization_code',
             code: code,
@@ -92,7 +89,6 @@ app.get('/callback', async (req, res) => {
 
         const { access_token, refresh_token } = tokenResponse.data;
 
-        // Guardamos los tokens en memoria asociados al ESP32
         tokensDispositivos[deviceId] = {
             access_token,
             refresh_token
@@ -133,7 +129,6 @@ app.get('/api/current-song', async (req, res) => {
     }
 
     try {
-        // Consultamos la API oficial de Spotify usando el token del usuario vinculado
         const response = await axios.get('https://api.spotify.com/v1/me/player/currently-playing', {
             headers: {
                 'Authorization': `Bearer ${sesion.access_token}`
@@ -152,7 +147,6 @@ app.get('/api/current-song', async (req, res) => {
             }
         });
     } catch (error) {
-        // Si el token expiró (aquí luego sumaremos el refresh_token), devolvemos error
         res.status(500).json({ error: "Error al consultar la canción actual" });
     }
 });
