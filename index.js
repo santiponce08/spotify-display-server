@@ -1,21 +1,25 @@
 const express = require('express');
 const qrcode = require('qrcode');
+const axios = require('axios'); // Asegurate de tener axios instalado o usaremos fetch
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Almacenamiento temporal en memoria para los tokens de Spotify de cada ESP32 (por device_id)
-const tokensDispositivos = {};
+// Credenciales de la API de Spotify (reemplazalas con tus valores o usá variables de entorno)
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || 'TU_CLIENT_ID';
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || 'TU_CLIENT_SECRET';
+const REDIRECT_URI = 'https://spotify-display-server.onrender.com/callback';
 
-// Ruta principal: Muestra un código QR amigable para que el usuario vincule su dispositivo
+// Almacenamiento temporal en memoria para los tokens de Spotify de cada ESP32
+const tokensDispositivos = {};
+// Mapeo temporal para saber qué device_id está intentando loguearse en cada sesión OAuth
+const authStates = {};
+
+// Ruta principal: Muestra el código QR para vincular el dispositivo
 app.get('/', async (req, res) => {
-    // Tomamos el device_id por parámetro o usamos uno por defecto de prueba
     const deviceId = req.query.device_id || 'default_device';
-    
-    // URL a la que redirigirá el QR para iniciar sesión en Spotify
     const linkAuthSpotify = `https://spotify-display-server.onrender.com/login?device_id=${deviceId}`;
 
     try {
-        // Generar un código QR en formato HTML visual
         const qrImage = await qrcode.toDataURL(linkAuthSpotify);
         res.send(`
             <html lang="es">
@@ -47,54 +51,110 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Ruta de inicio de sesión (la que faltaba para evitar el error Cannot GET /login)
+// Ruta de inicio de sesión: Redirige al usuario a la página oficial de autorización de Spotify
 app.get('/login', (req, res) => {
     const deviceId = req.query.device_id || 'default_device';
+    const state = Math.random().toString(36).substring(7);
     
-    res.send(`
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Conectar Spotify</title>
-            <style>
-                body { font-family: Arial, sans-serif; text-align: center; background-color: #121212; color: white; margin-top: 50px; }
-                .container { background: #181818; padding: 30px; border-radius: 12px; display: inline-block; }
-                h1 { color: #1DB954; }
-                p { color: #b3b3b3; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Conectando con Spotify...</h1>
-                <p>Dispositivo vinculado ID: <strong>${deviceId}</strong></p>
-                <p>Aquí se integrará el flujo de autenticación de la API de Spotify.</p>
-            </div>
-        </body>
-        </html>
-    `);
+    // Guardamos qué device_id corresponde a este state temporalmente
+    authStates[state] = deviceId;
+
+    const scope = 'user-read-playback-state user-read-currently-playing';
+    
+    const spotifyAuthUrl = `https://accounts.spotify.com/authorize?response_type=code&client_id=${CLIENT_ID}&scope=${encodeURIComponent(scope)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&state=${state}`;
+
+    res.redirect(spotifyAuthUrl);
 });
 
-// Ruta que consulta el ESP32 cada 3 segundos
-app.get('/api/current-song', (req, res) => {
+// Ruta Callback: Spotify redirige acá después de que el usuario acepta los permisos
+app.get('/callback', async (req, res) => {
+    const code = req.query.code || null;
+    const state = req.query.state || null;
+    const deviceId = authStates[state] || 'default_device';
+
+    if (!code) {
+        return res.status(400).send("Error: Falta el código de autorización de Spotify.");
+    }
+
+    try {
+        // Intercambiamos el código por los tokens de acceso y refresco
+        const tokenResponse = await axios.post('https://accounts.spotify.com/api/token', new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: code,
+            redirect_uri: REDIRECT_URI,
+            client_id: CLIENT_ID,
+            client_secret: CLIENT_SECRET
+        }), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
+
+        const { access_token, refresh_token } = tokenResponse.data;
+
+        // Guardamos los tokens en memoria asociados al ESP32
+        tokensDispositivos[deviceId] = {
+            access_token,
+            refresh_token
+        };
+
+        res.send(`
+            <html lang="es">
+            <head>
+                <meta charset="UTF-8">
+                <title>¡Vinculado con éxito!</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; background-color: #121212; color: white; margin-top: 50px; }
+                    .container { background: #181818; padding: 40px; border-radius: 12px; display: inline-block; }
+                    h1 { color: #1DB954; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>¡Cuenta vinculada con éxito!</h1>
+                    <p>Ya podés cerrar esta ventana. Tu ESP32 (ID: ${deviceId}) comenzará a mostrar tu música.</p>
+                </div>
+            </body>
+            </html>
+        `);
+    } catch (error) {
+        console.error("Error al obtener el token de Spotify:", error.response?.data || error.message);
+        res.status(500).send("Hubo un error al autenticarse con Spotify.");
+    }
+});
+
+// Ruta que consulta el ESP32 cada 3 segundos para obtener la canción actual
+app.get('/api/current-song', async (req, res) => {
     const deviceId = req.query.device_id;
-    
-    // Verificamos si el dispositivo tiene una sesión activa guardada
     const sesion = tokensDispositivos[deviceId];
 
     if (!sesion) {
-        // Si no está vinculado, devolvemos 404 para que el ESP32 muestre "Vincular en web"
         return res.status(404).json({ error: "Dispositivo no vinculado" });
     }
 
-    // Simulación de respuesta de la canción actual
-    res.json({
-        is_playing: true,
-        item: {
-            name: "Nombre de Canción",
-            artists: [{ name: "Artista de Ejemplo" }]
+    try {
+        // Consultamos la API oficial de Spotify usando el token del usuario vinculado
+        const response = await axios.get('https://api.spotify.com/v1/me/player/currently-playing', {
+            headers: {
+                'Authorization': `Bearer ${sesion.access_token}`
+            }
+        });
+
+        if (!response.data || !response.data.item) {
+            return res.json({ is_playing: false });
         }
-    });
+
+        res.json({
+            is_playing: response.data.is_playing,
+            item: {
+                name: response.data.item.name,
+                artists: response.data.item.artists
+            }
+        });
+    } catch (error) {
+        // Si el token expiró (aquí luego sumaremos el refresh_token), devolvemos error
+        res.status(500).json({ error: "Error al consultar la canción actual" });
+    }
 });
 
 app.listen(PORT, () => {
